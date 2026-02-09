@@ -11,13 +11,7 @@ Creator: Zhiyi Lu
 Create time: 2026-02-09
 """
 
-from db_client import (
-    execute_query,
-    execute_query_df,
-    test_connection,
-    print_status,
-    disconnect_server,
-)
+from db import execute_query, execute_query_df, print_status
 import time
 
 
@@ -30,7 +24,7 @@ def example_1_simple_query():
     result = execute_query(
         "SELECT current_database(), current_user, current_timestamp;",
         config_type="remote",
-        fetch="one"
+        fetch="one",
     )
     elapsed = time.time() - start
     print(f"Query completed in {elapsed*1000:.2f}ms")
@@ -46,7 +40,7 @@ def example_2_parameterized_query():
     # Query using information_schema (works on any database)
     df = execute_query_df(
         "SELECT table_schema, table_name FROM information_schema.tables LIMIT 5;",
-        config_type="remote"
+        config_type="remote",
     )
     print(f"Found {len(df)} tables:")
     for _, row in df.iterrows():
@@ -93,10 +87,12 @@ def fetch_user_count():
     result = execute_query(
         "SELECT count(*) as cnt FROM pg_user WHERE usename = current_user;",
         config_type="remote",
-        fetch="one"
+        fetch="one",
     )
     elapsed = time.time() - start
-    print(f"User check: {elapsed*1000:.2f}ms - Current user exists: {result.get('cnt') > 0}")
+    print(
+        f"User check: {elapsed*1000:.2f}ms - Current user exists: {result.get('cnt') > 0}"
+    )
 
 
 def fetch_table_count():
@@ -105,7 +101,7 @@ def fetch_table_count():
     result = execute_query(
         "SELECT count(*) as cnt FROM information_schema.tables;",
         config_type="remote",
-        fetch="one"
+        fetch="one",
     )
     elapsed = time.time() - start
     print(f"Table count: {elapsed*1000:.2f}ms - Found {result.get('cnt')} tables")
@@ -117,25 +113,10 @@ def fetch_schema_count():
     result = execute_query(
         "SELECT count(*) as cnt FROM information_schema.schemata;",
         config_type="remote",
-        fetch="one"
+        fetch="one",
     )
     elapsed = time.time() - start
     print(f"Schema count: {elapsed*1000:.2f}ms - Found {result.get('cnt')} schemas")
-
-
-def example_6_local_database():
-    """Example 6: Using local database configuration"""
-    print("\n=== Example 6: Local Database (if available) ===")
-
-    # Note: This will only work if you have a local PostgreSQL running
-    success = test_connection("local")
-    if success:
-        result = execute_query(
-            "SELECT version();",
-            config_type="local",
-            fetch="one"
-        )
-        print(f"Local PostgreSQL: {result.get('version')[:50]}...")
 
 
 if __name__ == "__main__":
@@ -152,11 +133,10 @@ if __name__ == "__main__":
     example_4_server_status()
     example_5_connection_reuse_demo()
 
-    # Only run local example if requested
-    # example_6_local_database()
-
     print("\n" + "=" * 60)
     print("All examples completed!")
     print("=" * 60)
-    print("\nNote: The connection server will auto-shutdown after 1 hour of inactivity.")
+    print(
+        "\nNote: The connection server will auto-shutdown after 1 hour of inactivity."
+    )
     print("To manually stop it, call disconnect_server() or kill the process.")

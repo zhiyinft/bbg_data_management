@@ -1,47 +1,26 @@
 # -*- coding: utf-8 -*-
 """
-Database connection script for NFT RDS instances using SQLAlchemy
 Creator: Zhiyi Lu
-Create time: 2026-01-21
+Create time: 2026-02-09 13:47
+Description:Database connection script for NFT RDS instances using SQLAlchemy
 """
+
 
 import pandas as pd
 import urllib.parse
 
-from typing import Optional, Dict, Any, List, Tuple
-from contextlib import contextmanager
 from tqdm.auto import tqdm
 from loguru import logger
 
 import os
 import sqlalchemy
 from sqlalchemy.pool import NullPool
-from sqlalchemy import create_engine, text, inspect
-from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.exc import SQLAlchemyError
 
 
-from db_client import get_client
+from .db_client import get_client
+from .connection_server import NFT_RDS_CONFIG_LOCAL
 
-
-NFT_RDS_CONFIG_LOCAL = {
-    "db_type": "postgres",
-    "host": "localhost",
-    "user": "postgres",
-    "password": "nft2024",
-    "port": 5432,
-    "db": "nft",
-}
-
-
-NFT_RDS_CONFIG = {
-    "db_type": "postgres",
-    "host": "serving-data-instance-2-cluster.cluster-clf3qkbc2hx2.us-east-2.rds.amazonaws.com",
-    "user": "postgres",
-    "password": "t9noEyiW8ArYXLqr0c52",
-    "port": 5432,
-    "db": "nft",
-}
 
 datetime_col_alias = ["dt"]
 ticker_col_alias = ["ticker", "symbol", "bloomberg_ticker"]
@@ -810,8 +789,6 @@ class ClientEngine:
     """
 
     def __init__(self, config_type: str = "remote"):
-        from db_client import get_client
-
         self.config_type = config_type
         self._client = get_client(config_type, auto_start=True)
 
@@ -911,11 +888,6 @@ class ClientResult:
     @property
     def _mapping(self):
         return self._data[0] if self._data else {}
-
-
-def get_client_engine(config_type: str = "remote"):
-    """Get a ClientEngine for the specified config type."""
-    return ClientEngine(config_type)
 
 
 # Client-based DB class that uses simple queries for reflection
