@@ -30,6 +30,7 @@ import traceback
 
 import sqlalchemy
 from sqlalchemy import create_engine, text
+import psycopg2.extras
 
 
 # Connection configurations
@@ -137,18 +138,45 @@ class ConnectionPool:
                 conn.commit()
                 return {"affected_rows": result.rowcount}
 
+    def bulk_insert(
+        self, table: str, columns: list, rows: list
+    ) -> Dict[str, Any]:
+        """
+        Fast bulk insert using psycopg2.extras.execute_values.
+
+        Args:
+            table: Full table name (schema.table)
+            columns: List of column names
+            rows: List of lists/tuples containing row values
+
+        Returns:
+            Dict with affected_rows count
+        """
+        engine = self.get_engine()
+
+        # Get raw psycopg2 connection from SQLAlchemy engine
+        conn = engine.raw_connection()
+        try:
+            cursor = conn.cursor()
+            cols_str = ", ".join(columns)
+            # Use execute_values for fast bulk insert
+            psycopg2.extras.execute_values(
+                cursor,
+                f"INSERT INTO {table} ({cols_str}) VALUES %s",
+                rows,
+                page_size=1000,
+            )
+            conn.commit()
+            return {"affected_rows": len(rows)}
+        finally:
+            conn.close()
+
     def disconnect(self):
         with self._lock:
+            self._shutdown = True
             if self._engine is not None:
-                logger.info(f"Disconnecting {self.config_type}")
                 self._engine.dispose()
                 self._engine = None
-                self._last_used = None
-
-    def shutdown(self):
-        with self._lock:
-            self._shutdown = True
-            self.disconnect()
 
 
 class ClientInfo:
@@ -380,6 +408,10 @@ class ConnectionServer:
             return {"status": "pong"}
         elif action == "logs":
             return self._get_logs(request)
+        elif action == "bulk_insert":
+            return self._bulk_insert(request, address)
+        elif action == "shutdown":
+            return self._shutdown_server(request)
         else:
             return {"error": f"Unknown action: {action}"}
 
@@ -494,6 +526,38 @@ class ConnectionServer:
                 return {"success": True, "disconnected": "all"}
         return {"error": "Pool not found"}
 
+    def _bulk_insert(
+        self, request: Dict[str, Any], address: tuple = None
+    ) -> Dict[str, Any]:
+        """Fast bulk insert using psycopg2 execute_values"""
+        try:
+            table = request.get("table")
+            columns = request.get("columns")
+            rows = request.get("rows")
+            config_type = request.get("config_type", "remote")
+
+            if not table or not columns or rows is None:
+                return {"error": "Missing required parameters: table, columns, rows"}
+
+            pool = self.get_pool(config_type)
+            result = pool.bulk_insert(table, columns, rows)
+
+            return {
+                "success": True,
+                "data": result,
+            }
+        except Exception as e:
+            logger.error(f"[BULK_INSERT_ERROR] {e}")
+            return {"error": str(e)}
+
+    def _shutdown_server(
+        self, request: Dict[str, Any] = None
+    ) -> Dict[str, Any]:
+        """Shutdown the server gracefully"""
+        logger.info("[SHUTDOWN] Server shutdown requested by client")
+        self.shutdown()
+        return {"success": True, "message": "Server shutting down"}
+
     def _idle_monitor(self):
         """Background thread to monitor idle time and auto-shutdown"""
         while not self._shutdown_event.is_set():
@@ -567,7 +631,7 @@ class ConnectionServer:
         # Shutdown all pools
         with self._pools_lock:
             for pool in self._pools.values():
-                pool.shutdown()
+                pool.disconnect()
             self._pools.clear()
 
     def _log_status(self, event: str = "status"):

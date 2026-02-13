@@ -279,6 +279,53 @@ class ConnectionClient:
         except Exception as e:
             return {"error": str(e)}
 
+    def bulk_insert(
+        self,
+        table: str,
+        columns: list,
+        rows: list,
+        config_type: str = None,
+    ) -> Dict[str, Any]:
+        """
+        Fast bulk insert using psycopg2 execute_values.
+
+        Args:
+            table: Full table name (schema.table)
+            columns: List of column names
+            rows: List of lists/tuples containing row values
+            config_type: 'remote' or 'local' (overrides instance setting)
+
+        Returns:
+            Dictionary with 'success' and 'data' or 'error' keys
+        """
+        if not self.connect():
+            return {"error": "Failed to connect to server"}
+
+        request = {
+            "action": "bulk_insert",
+            "table": table,
+            "columns": columns,
+            "rows": rows,
+            "config_type": config_type or self.config_type,
+        }
+
+        try:
+            return self._send_request(request)
+        except Exception as e:
+            return {"error": str(e)}
+
+    def shutdown(self) -> Dict[str, Any]:
+        """Shutdown the server"""
+        if not self.connect():
+            return {"error": "Failed to connect to server"}
+
+        request = {"action": "shutdown"}
+
+        try:
+            return self._send_request(request)
+        except Exception as e:
+            return {"error": str(e)}
+
 
 # Default clients for convenience
 _default_clients: Dict[str, ConnectionClient] = {}
@@ -487,6 +534,61 @@ def disconnect_server(config_type: str = None):
         print(f"Error disconnecting: {response['error']}")
     else:
         print(f"Disconnected: {response.get('disconnected')}")
+
+
+def shutdown_server():
+    """
+    Shutdown the connection server gracefully.
+
+    This will stop the server process. Any future queries will
+    auto-start a new server instance.
+    """
+    client = get_client()
+    response = client.shutdown()
+
+    if "error" in response:
+        print(f"Error shutting down server: {response['error']}")
+    else:
+        print(f"Server shutdown: {response.get('message', 'Shutdown complete')}")
+
+
+def restart_server():
+    """
+    Restart the connection server.
+
+    This shuts down the current server and starts a new one.
+    Useful when server code has been updated.
+    """
+    print("Restarting connection server...")
+
+    # First try to shutdown existing server
+    client = get_client()
+    response = client.shutdown()
+
+    if "error" not in response:
+        print("Server shutdown successfully")
+    else:
+        # Server might not be running, that's ok
+        print(f"No existing server or shutdown completed: {response.get('error', '')}")
+
+    # Wait a moment for port to be released
+    time.sleep(0.5)
+
+    # Clear the client cache so a new one will be created
+    _default_clients.clear()
+
+    # Start new server by creating a new client
+    new_client = ConnectionClient(auto_start=True)
+    _default_clients["remote"] = new_client
+
+    # Wait for server to start
+    for i in range(50):
+        time.sleep(0.1)
+        if new_client._is_server_running():
+            print("Server restarted successfully")
+            return
+
+    print("Failed to restart server - please check logs")
 
 
 if __name__ == "__main__":
