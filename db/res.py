@@ -236,7 +236,7 @@ class S:
             if self.dt_col in df.columns:
                 sort_cols.append(self.dt_col)
             if sort_cols:
-                df = df.sort_values(sort_cols, ascending=False)
+                df = df.sort_values(sort_cols)
 
             if force_raw:
                 return df
@@ -1113,6 +1113,8 @@ class ClientTable:
         if col_rename_dict is not None:
             df = df.rename(columns=col_rename_dict)
 
+        df = df.rename(columns=str.lower)
+
         # Keep only columns that exist in the table
         valid_cols = [c for c in df.columns if c in self._columns]
         if not valid_cols:
@@ -1160,7 +1162,7 @@ class ClientTable:
 
             multi_query = f"""
                 INSERT INTO {self.fullname} ({cols})
-                VALUES {', '.join(values_list)}
+                VALUES {", ".join(values_list)}
             """
 
             result = self.schema.db._client.execute(multi_query, params, fetch=None)
@@ -1188,24 +1190,27 @@ class ClientTable:
         except Exception as e:
             return False, {"inserted": 0, "errors": 0}, str(e)
 
-    def insert_fast(self, df, col_rename_dict=None) -> dict:
+    def insert_fast(self, df, col_rename_dict=None, batch_size: int = 5000) -> dict:
         """
         Fast bulk insert using psycopg2.extras.execute_values.
         Uses server-side bulk insert for better performance (10-50x faster).
 
+        Rows are sent in batches of ``batch_size`` so that each round-trip to
+        the connection server completes well within the socket READ_TIMEOUT even
+        on low-bandwidth connections to a remote RDS.
+
         Args:
             df: DataFrame to insert
             col_rename_dict: Optional column renaming dictionary
+            batch_size: Number of rows per round-trip (default 5 000)
 
         Returns:
             dict: Statistics about the operation (inserted, errors)
-
-        Note:
-            This method uses psycopg2's execute_values which is much faster
-            than the standard insert() method. Use this for large datasets.
         """
         if col_rename_dict is not None:
             df = df.rename(columns=col_rename_dict)
+
+        df = df.rename(columns=str.lower)
 
         # Keep only columns that exist in the table
         valid_cols = [c for c in df.columns if c in self._columns]
@@ -1221,27 +1226,41 @@ class ClientTable:
             return {"inserted": 0, "errors": 0}
 
         # Replace NaN with None (NULL in SQL) for all columns
-        # This is required because psycopg2 can't convert float NaN to integer columns
+        # psycopg2 cannot convert float NaN to integer columns
         df = df.replace({float("nan"): None})
 
         # Convert DataFrame to list of tuples (much faster than iterrows)
-        # Use itertuples for speed (5-10x faster than iterrows)
         rows = [tuple(row) for row in df.itertuples(index=False)]
 
-        # Execute bulk insert via server
-        result = self.schema.db._client.bulk_insert(
-            table=self.fullname,
-            columns=valid_cols,
-            rows=rows,
+        total = len(rows)
+        n_batches = (total + batch_size - 1) // batch_size
+        stats = {"inserted": 0, "errors": 0}
+
+        with tqdm(total=total, desc=f"insert → {self.fullname}", unit="row") as pbar:
+            for i in range(n_batches):
+                batch = rows[i * batch_size : (i + 1) * batch_size]
+                result = self.schema.db._client.bulk_insert(
+                    table=self.fullname,
+                    columns=valid_cols,
+                    rows=batch,
+                )
+                if "error" in result:
+                    logger.error(
+                        f"Error in fast insert to {self.fullname} "
+                        f"(batch {i + 1}/{n_batches}): {result['error']}"
+                    )
+                    stats["errors"] += len(batch)
+                else:
+                    stats["inserted"] += result.get("data", {}).get(
+                        "affected_rows", len(batch)
+                    )
+                pbar.update(len(batch))
+
+        logger.info(
+            f"Fast insert completed for {self.fullname}: "
+            f"{stats['inserted']:,} inserted, {stats['errors']:,} errors."
         )
-
-        if "error" in result:
-            logger.error(f"Error in fast insert to {self.fullname}: {result['error']}")
-            return {"inserted": 0, "errors": len(df)}
-
-        inserted = result.get("data", {}).get("affected_rows", len(df))
-        logger.info(f"Fast insert completed for {self.fullname}: {inserted} rows")
-        return {"inserted": inserted, "errors": 0}
+        return stats
 
     def insert_fast_safe(self, df, col_rename_dict=None):
         """

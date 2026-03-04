@@ -35,8 +35,8 @@ DEFAULT_PORTS = {
     "remote": 15500,
     "local": 15501,
 }
-CONNECT_TIMEOUT = 5.0
-READ_TIMEOUT = 30.0
+CONNECT_TIMEOUT = 10
+READ_TIMEOUT = 120
 
 
 def _get_script_name() -> str:
@@ -331,7 +331,9 @@ class ConnectionClient:
 _default_clients: Dict[str, ConnectionClient] = {}
 
 
-def get_client(config_type: str = "remote", auto_start: bool = True) -> ConnectionClient:
+def get_client(
+    config_type: str = "remote", auto_start: bool = True
+) -> ConnectionClient:
     """Get or create a client for the specified config type"""
     if config_type not in _default_clients:
         _default_clients[config_type] = ConnectionClient(
@@ -607,7 +609,7 @@ if __name__ == "__main__":
     result = execute_query(
         "SELECT current_database(), current_user, current_timestamp;",
         config_type="remote",
-        fetch="one"
+        fetch="one",
     )
     print(f"Database: {result.get('current_database')}")
     print(f"User: {result.get('current_user')}")
@@ -619,8 +621,7 @@ if __name__ == "__main__":
     print("\n3. Testing DataFrame query...")
     try:
         df = execute_query_df(
-            "SELECT * FROM information_schema.tables LIMIT 5",
-            config_type="remote"
+            "SELECT * FROM information_schema.tables LIMIT 5", config_type="remote"
         )
         print(f"Retrieved {len(df)} rows")
         print(df[["table_schema", "table_name"]].to_string())
